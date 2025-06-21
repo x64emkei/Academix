@@ -1,686 +1,814 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, query, where, setDoc, getDoc, setLogLevel } from 'firebase/firestore';
-import { Plus, BookOpen, CheckSquare, Clock, Trash2, Edit, X, BarChart2, Calendar, User, Settings, Bell, ChevronDown, ChevronUp } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Academa - Academic Dashboard</title>
+    
+    <!-- Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
 
-// --- Helper Functions ---
-const formatDate = (date) => {
-  if (!date) return 'No due date';
-  const d = date.seconds ? new Date(date.seconds * 1000) : new Date(date);
-  return d.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-};
+    <!-- Load React libraries -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
 
-const getStatusInfo = (status) => {
-  switch (status) {
-    case 'completed':
-      return { text: 'Completed', color: 'bg-green-500/20 text-green-400', icon: <CheckSquare size={14} /> };
-    case 'in_progress':
-      return { text: 'In Progress', color: 'bg-yellow-500/20 text-yellow-400', icon: <Edit size={14} /> };
-    case 'todo':
-    default:
-      return { text: 'To-Do', color: 'bg-blue-500/20 text-blue-400', icon: <Clock size={14} /> };
-  }
-};
+    <!-- Load Babel to transpile JSX in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Custom styles and animations -->
+    <style>
+        /* Define theme color variable for CSS */
+        :root {
+            --theme-color: #3b82f6; /* Default theme color */
+        }
+        /* Simple fade-in animation */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeInFast {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .animate-fade-in-fast {
+            animation: fadeInFast 0.2s ease-in-out;
+        }
+        /* Custom scrollbar for a better look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 10px;
+            border: 2px solid #1f2937;
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+    <!-- The root element where our React app will be mounted -->
+    <div id="root"></div>
 
-const courseColors = [
-  '#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#10b981', '#14b8a6', 
-  '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'
-];
+    <!-- Firebase SDKs - loaded as modules -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
 
-const defaultTaskTypes = ['Assignment', 'Quiz', 'Project', 'Reading', 'Exam Prep'];
+        // Make Firebase functions available globally for the Babel script
+        window.firebase = {
+            initializeApp,
+            getAuth,
+            signInAnonymously,
+            onAuthStateChanged,
+            signInWithCustomToken,
+            getFirestore
+        };
+    </script>
 
-// --- Firebase Initialization ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-academic-dashboard';
+    <!-- Our React application code, written in JSX -->
+    <script type="text/babel" data-type="module">
+    
+    // Deconstruct React hooks from the global React object
+    const { useState, useEffect, useCallback } = React;
+    
+    // Import Firebase from the global window object (set in the script above)
+    const { initializeApp } = window.firebase;
+    const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.firebase;
+    const { getFirestore } = window.firebase;
+    
+    // We need to import these from the global Firestore object after it's initialized
+    // This is a workaround for using ES modules with Babel Standalone
+    let collection, doc, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, query, where, setDoc, getDoc, setLogLevel;
 
-// --- Main App Component ---
-export default function App() {
-  const [activeView, setActiveView] = useState('dashboard');
-  const [courses, setCourses] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [userProfile, setUserProfile] = useState({ name: 'Student', themeColor: '#3b82f6' });
-  
-  const [db, setDb] = useState(null);
-  const [auth, setAuth] = useState(null);
-  const [userId, setUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
 
-  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  
-  const [editingCourse, setEditingCourse] = useState(null);
-  const [editingTask, setEditingTask] = useState(null);
+    // --- Icon SVGs ---
+    // Instead of importing from a library, we define the SVGs directly.
+    // This removes the need for another dependency (lucide-react).
+    const icons = {
+        Plus: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
+        BookOpen: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>`,
+        CheckSquare: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>`,
+        Clock: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`,
+        Trash2: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`,
+        Edit: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`,
+        X: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
+        BarChart2: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>`,
+        Calendar: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
+        User: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`,
+        ChevronDown: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`,
+        ChevronUp: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`,
+    };
+    
+    // A simple component to render our SVG icons
+    const Icon = ({ name, size = 24, color = "currentColor" }) => {
+        const svg = { __html: icons[name] };
+        return <div style={{ width: size, height: size, color: color }} dangerouslySetInnerHTML={svg} />;
+    };
 
-  // --- Initialize Firebase and Auth ---
-  useEffect(() => {
-    try {
-      if (Object.keys(firebaseConfig).length > 0) {
-        setLogLevel('debug');
-        const app = initializeApp(firebaseConfig);
-        const firestore = getFirestore(app);
-        const authInstance = getAuth(app);
-        setDb(firestore);
-        setAuth(authInstance);
 
-        onAuthStateChanged(authInstance, async (user) => {
-          if (user) {
-            setUserId(user.uid);
-          } else {
-            try {
-               if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                 await signInWithCustomToken(authInstance, __initial_auth_token);
-               } else {
-                 await signInAnonymously(authInstance);
-               }
-            } catch (authError) {
-                 console.error("Authentication Error:", authError);
-            }
-          }
-          setIsAuthReady(true);
-        });
-      } else {
-          console.log("Firebase config not found, running in offline mode.");
-          setIsLoading(false);
+    // --- Helper Functions ---
+    const formatDate = (date) => {
+      if (!date) return 'No due date';
+      const d = date.seconds ? new Date(date.seconds * 1000) : new Date(date);
+      return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    };
+
+    const getStatusInfo = (status) => {
+      switch (status) {
+        case 'completed':
+          return { text: 'Completed', color: 'bg-green-500/20 text-green-400', icon: 'CheckSquare' };
+        case 'in_progress':
+          return { text: 'In Progress', color: 'bg-yellow-500/20 text-yellow-400', icon: 'Edit' };
+        default:
+          return { text: 'To-Do', color: 'bg-blue-500/20 text-blue-400', icon: 'Clock' };
       }
-    } catch (error) {
-        console.error("Firebase Initialization Error:", error);
-        setIsLoading(false);
-    }
-  }, []);
+    };
 
-  // --- Data Fetching from Firestore ---
-  useEffect(() => {
-    if (isAuthReady && db && userId) {
-      const paths = {
-          courses: `artifacts/${appId}/users/${userId}/courses`,
-          tasks: `artifacts/${appId}/users/${userId}/tasks`,
-          profile: `artifacts/${appId}/users/${userId}/profile/main`
+    const courseColors = [
+      '#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#10b981', '#14b8a6', 
+      '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'
+    ];
+
+    const defaultTaskTypes = ['Assignment', 'Quiz', 'Project', 'Reading', 'Exam Prep'];
+
+    // --- Firebase Initialization ---
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-academic-dashboard';
+
+    // --- Main App Component ---
+    function App() {
+      const [activeView, setActiveView] = useState('dashboard');
+      const [courses, setCourses] = useState([]);
+      const [tasks, setTasks] = useState([]);
+      const [userProfile, setUserProfile] = useState({ name: 'Student', themeColor: '#3b82f6' });
+      
+      const [db, setDb] = useState(null);
+      const [auth, setAuth] = useState(null);
+      const [userId, setUserId] = useState(null);
+      const [isAuthReady, setIsAuthReady] = useState(false);
+      const [isLoading, setIsLoading] = useState(true);
+
+      const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
+      const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+      const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+      
+      const [editingCourse, setEditingCourse] = useState(null);
+      const [editingTask, setEditingTask] = useState(null);
+
+      // --- Initialize Firebase and Auth ---
+      useEffect(() => {
+        (async () => {
+            try {
+                if (Object.keys(firebaseConfig).length > 0) {
+                    const app = initializeApp(firebaseConfig);
+                    const firestore = getFirestore(app);
+                    const authInstance = getAuth(app);
+                    
+                    // Dynamically import Firestore functions
+                    const firestoreFunctions = await import("https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js");
+                    collection = firestoreFunctions.collection;
+                    doc = firestoreFunctions.doc;
+                    addDoc = firestoreFunctions.addDoc;
+                    getDocs = firestoreFunctions.getDocs;
+                    onSnapshot = firestoreFunctions.onSnapshot;
+                    updateDoc = firestoreFunctions.updateDoc;
+                    deleteDoc = firestoreFunctions.deleteDoc;
+                    query = firestoreFunctions.query;
+                    where = firestoreFunctions.where;
+                    setDoc = firestoreFunctions.setDoc;
+                    getDoc = firestoreFunctions.getDoc;
+                    
+                    setDb(firestore);
+                    setAuth(authInstance);
+
+                    onAuthStateChanged(authInstance, async (user) => {
+                      if (user) {
+                        setUserId(user.uid);
+                      } else {
+                         try {
+                           const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                           if (token) {
+                             await signInWithCustomToken(authInstance, token);
+                           } else {
+                             await signInAnonymously(authInstance);
+                           }
+                         } catch (authError) {
+                             console.error("Authentication Error:", authError);
+                         }
+                      }
+                      setIsAuthReady(true);
+                    });
+                } else {
+                    console.log("Firebase config not found, running in offline mode.");
+                    setIsLoading(false);
+                }
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                setIsLoading(false);
+            }
+        })();
+      }, []);
+
+      // --- Data Fetching from Firestore ---
+      useEffect(() => {
+        if (isAuthReady && db && userId) {
+          const paths = {
+              courses: `artifacts/${appId}/users/${userId}/courses`,
+              tasks: `artifacts/${appId}/users/${userId}/tasks`,
+              profile: `artifacts/${appId}/users/${userId}/profile/main`
+          };
+
+          const unsubscribers = [];
+          setIsLoading(true);
+
+          unsubscribers.push(onSnapshot(collection(db, paths.courses), (snapshot) => {
+            setCourses(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+          }, (e) => console.error("Error fetching courses:", e)));
+
+          unsubscribers.push(onSnapshot(collection(db, paths.tasks), (snapshot) => {
+            setTasks(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+          }, (e) => console.error("Error fetching tasks:", e)));
+          
+          unsubscribers.push(onSnapshot(doc(db, paths.profile), (d) => {
+              if (d.exists()) {
+                  setUserProfile(d.data());
+              } else {
+                  setDoc(d.ref, { name: 'Student', themeColor: '#3b82f6' });
+              }
+          }, (e) => console.error("Error fetching profile:", e)));
+
+          Promise.all([getDocs(collection(db, paths.courses)), getDocs(collection(db, paths.tasks))])
+            .then(() => setIsLoading(false))
+            .catch(() => setIsLoading(false));
+
+          return () => unsubscribers.forEach(unsub => unsub());
+        }
+      }, [isAuthReady, db, userId]);
+      
+      // Update the theme color on the root element when it changes
+      useEffect(() => {
+        document.documentElement.style.setProperty('--theme-color', userProfile.themeColor);
+      }, [userProfile.themeColor]);
+
+
+      // --- CRUD Operations ---
+      const handleCourseSubmit = async (courseData) => {
+        if (!db || !userId) return;
+        const collectionPath = `artifacts/${appId}/users/${userId}/courses`;
+        if (editingCourse) {
+          await updateDoc(doc(db, collectionPath, editingCourse.id), courseData);
+        } else {
+          await addDoc(collection(db, collectionPath), { ...courseData, attendance: [], exams: [], notes: '' });
+        }
+        closeCourseModal();
       };
 
-      const unsubscribers = [];
-      setIsLoading(true);
+      const handleTaskSubmit = async (taskData) => {
+        if (!db || !userId) return;
+        const collectionPath = `artifacts/${appId}/users/${userId}/tasks`;
+        if (taskData.dueDate) {
+            taskData.dueDate = {
+                seconds: Math.floor(new Date(taskData.dueDate).getTime() / 1000),
+                nanoseconds: 0
+            };
+        }
+        if (editingTask) {
+          await updateDoc(doc(db, collectionPath, editingTask.id), taskData);
+        } else {
+          await addDoc(collection(db, collectionPath), { ...taskData, subtasks: [] });
+        }
+        closeTaskModal();
+      };
+        
+      const handleProfileSubmit = async (profileData) => {
+          if (!db || !userId) return;
+          const docPath = `artifacts/${appId}/users/${userId}/profile/main`;
+          await setDoc(doc(db, docPath), profileData);
+          closeProfileModal();
+      };
 
-      unsubscribers.push(onSnapshot(collection(db, paths.courses), (snapshot) => {
-        setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      }, (e) => console.error("Error fetching courses:", e)));
+      const handleDeleteCourse = async (courseId) => {
+         if (!db || !userId || !confirm('Are you sure? This will delete the course and all its tasks.')) return;
+         const coursePath = `artifacts/${appId}/users/${userId}/courses/${courseId}`;
+         await deleteDoc(doc(db, coursePath));
+         const tasksPath = `artifacts/${appId}/users/${userId}/tasks`;
+         const q = query(collection(db, tasksPath), where("courseId", "==", courseId));
+         const querySnapshot = await getDocs(q);
+         querySnapshot.forEach(async (taskDoc) => {
+            await deleteDoc(doc(db, tasksPath, taskDoc.id));
+         });
+      };
 
-      unsubscribers.push(onSnapshot(collection(db, paths.tasks), (snapshot) => {
-        setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      }, (e) => console.error("Error fetching tasks:", e)));
+      const handleDeleteTask = async (taskId) => {
+          if (!db || !userId || !confirm('Delete this task?')) return;
+          await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId));
+      };
+        
+      const updateGenericDoc = async (collectionName, docId, data) => {
+          if (!db || !userId) return;
+          const path = `artifacts/${appId}/users/${userId}/${collectionName}/${docId}`;
+          await updateDoc(doc(db, path), data);
+      };
+
+      // --- Modal Management ---
+      const openCourseModal = (c = null) => { setEditingCourse(c); setIsCourseModalOpen(true); };
+      const closeCourseModal = () => setIsCourseModalOpen(false);
+      const openTaskModal = (t = null) => { setEditingTask(t); setIsTaskModalOpen(true); };
+      const closeTaskModal = () => setIsTaskModalOpen(false);
+      const openProfileModal = () => setIsProfileModalOpen(true);
+      const closeProfileModal = () => setIsProfileModalOpen(false);
       
-      unsubscribers.push(onSnapshot(doc(db, paths.profile), (doc) => {
-          if (doc.exists()) {
-              setUserProfile(doc.data());
-          } else {
-              // Create a default profile if it doesn't exist
-              setDoc(doc.ref, { name: 'Student', themeColor: '#3b82f6' });
-          }
-      }, (e) => console.error("Error fetching profile:", e)));
+      // --- Render Logic ---
+      const renderView = () => {
+        if(!db) return <div className="text-white p-8">Initializing Firebase...</div>
+        switch (activeView) {
+          case 'courses':
+            return <CoursesView courses={courses} tasks={tasks} openCourseModal={openCourseModal} handleDeleteCourse={handleDeleteCourse} updateCourse={updateGenericDoc} />;
+          case 'tasks':
+            return <TasksView tasks={tasks} courses={courses} openTaskModal={openTaskModal} handleDeleteTask={handleDeleteTask} updateTask={updateGenericDoc}/>;
+          case 'planner':
+            return <PlannerView tasks={tasks} courses={courses} />;
+          default:
+            return <DashboardView tasks={tasks} courses={courses} openTaskModal={openTaskModal} updateTask={updateGenericDoc} userProfile={userProfile} />;
+        }
+      };
 
-      Promise.all([getDocs(collection(db, paths.courses)), getDocs(collection(db, paths.tasks))])
-        .then(() => setIsLoading(false))
-        .catch(() => setIsLoading(false));
+      if (isLoading) {
+        return <div className="bg-gray-900 text-white min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-[var(--theme-color)]"></div></div>;
+      }
 
-      return () => unsubscribers.forEach(unsub => unsub());
+      return (
+        <div className="bg-gray-900 text-gray-200 min-h-screen flex font-sans">
+          <Sidebar activeView={activeView} setActiveView={setActiveView} openProfileModal={openProfileModal} />
+          <main className="flex-1 p-4 sm:p-8 ml-16 sm:ml-64 transition-all duration-300">
+            {renderView()}
+          </main>
+          {isCourseModalOpen && <CourseModal onClose={closeCourseModal} onSubmit={handleCourseSubmit} course={editingCourse} />}
+          {isTaskModalOpen && <TaskModal onClose={closeTaskModal} onSubmit={handleTaskSubmit} task={editingTask} courses={courses} />}
+          {isProfileModalOpen && <ProfileModal onClose={closeProfileModal} onSubmit={handleProfileSubmit} profile={userProfile} />}
+        </div>
+      );
     }
-  }, [isAuthReady, db, userId]);
+    
+    // --- Components are defined below and used by the App component ---
 
-  // --- CRUD Operations ---
-  const handleCourseSubmit = async (courseData) => {
-    if (!db || !userId) return;
-    const collectionPath = `artifacts/${appId}/users/${userId}/courses`;
-    if (editingCourse) {
-      await updateDoc(doc(db, collectionPath, editingCourse.id), courseData);
-    } else {
-      await addDoc(collection(db, collectionPath), { ...courseData, attendance: [], exams: [], notes: '' });
+    function Sidebar({ activeView, setActiveView, openProfileModal }) {
+        const navItems = [
+            { id: 'dashboard', icon: 'BarChart2', label: 'Dashboard' },
+            { id: 'courses', icon: 'BookOpen', label: 'Courses' },
+            { id: 'tasks', icon: 'CheckSquare', label: 'Tasks' },
+            { id: 'planner', icon: 'Calendar', label: 'Planner' },
+        ];
+        const [isExpanded, setIsExpanded] = useState(false);
+
+        return (
+            <aside 
+                className={`fixed top-0 left-0 h-full bg-gray-950/50 backdrop-blur-sm border-r border-gray-700/50 transition-all duration-300 ease-in-out z-40 ${isExpanded ? 'w-64' : 'w-16'}`}
+                onMouseEnter={() => setIsExpanded(true)} onMouseLeave={() => setIsExpanded(false)} >
+                <div className="flex flex-col h-full">
+                    <div className="flex items-center justify-center h-20 border-b border-gray-700/50">
+                       <Icon name="BookOpen" size={28} color="var(--theme-color)" />
+                    </div>
+                    <nav className="flex-1 py-4">
+                        <ul>
+                            {navItems.map(item => (
+                                <li key={item.id} className="px-4 py-2">
+                                    <button onClick={() => setActiveView(item.id)} className={`flex items-center w-full rounded-md p-3 transition-colors duration-200 ${activeView === item.id ? 'bg-[var(--theme-color)]/20 text-[var(--theme-color)]' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'}`}>
+                                        <Icon name={item.icon} size={24} />
+                                        <span className={`ml-4 transition-opacity duration-200 ${isExpanded ? 'opacity-100' : 'opacity-0'}`}>{item.label}</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </nav>
+                     <div className="p-4 border-t border-gray-700/50">
+                        <button onClick={openProfileModal} className={`flex items-center w-full rounded-md p-3 transition-colors duration-200 text-gray-400 hover:bg-gray-700/50 hover:text-white`}>
+                            <Icon name="User" size={24} />
+                            <span className={`ml-4 transition-opacity duration-200 ${isExpanded ? 'opacity-100' : 'opacity-0'}`}>Profile</span>
+                        </button>
+                     </div>
+                </div>
+            </aside>
+        );
     }
-    closeCourseModal();
-  };
 
-  const handleTaskSubmit = async (taskData) => {
-    if (!db || !userId) return;
-    const collectionPath = `artifacts/${appId}/users/${userId}/tasks`;
-    if (taskData.dueDate) {
-        taskData.dueDate = {
-            seconds: Math.floor(new Date(taskData.dueDate).getTime() / 1000),
-            nanoseconds: 0
+    function DashboardView({ tasks, courses, openTaskModal, updateTask, userProfile }) {
+        const upcomingTasks = tasks.filter(t => t.status !== 'completed' && t.dueDate).sort((a, b) => a.dueDate.seconds - b.dueDate.seconds).slice(0, 5);
+        const getCourseName = (courseId) => courses.find(c => c.id === courseId)?.name || 'Unassigned';
+        const stats = {
+            totalCourses: courses.length,
+            activeTasks: tasks.filter(t => t.status !== 'completed').length,
+            completedTasks: tasks.filter(t => t.status === 'completed').length,
         };
-    }
-    if (editingTask) {
-      await updateDoc(doc(db, collectionPath, editingTask.id), taskData);
-    } else {
-      await addDoc(collection(db, collectionPath), { ...taskData, subtasks: [] });
-    }
-    closeTaskModal();
-  };
-    
-  const handleProfileSubmit = async (profileData) => {
-      if (!db || !userId) return;
-      const docPath = `artifacts/${appId}/users/${userId}/profile/main`;
-      await setDoc(doc(db, docPath), profileData);
-      closeProfileModal();
-  };
-
-  const handleDeleteCourse = async (courseId) => {
-     if (!db || !userId || !window.confirm('Are you sure? This will delete the course and all its tasks.')) return;
-     const coursePath = `artifacts/${appId}/users/${userId}/courses/${courseId}`;
-     await deleteDoc(doc(db, coursePath));
-     const tasksPath = `artifacts/${appId}/users/${userId}/tasks`;
-     const q = query(collection(db, tasksPath), where("courseId", "==", courseId));
-     const querySnapshot = await getDocs(q);
-     querySnapshot.forEach(async (taskDoc) => {
-        await deleteDoc(doc(db, tasksPath, taskDoc.id));
-     });
-  };
-
-  const handleDeleteTask = async (taskId) => {
-      if (!db || !userId || !window.confirm('Delete this task?')) return;
-      await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId));
-  };
-    
-  const updateGenericDoc = async (collectionName, docId, data) => {
-      if (!db || !userId) return;
-      const path = `artifacts/${appId}/users/${userId}/${collectionName}/${docId}`;
-      await updateDoc(doc(db, path), data);
-  };
-
-  // --- Modal Management ---
-  const openCourseModal = (c = null) => { setEditingCourse(c); setIsCourseModalOpen(true); };
-  const closeCourseModal = () => setIsCourseModalOpen(false);
-  const openTaskModal = (t = null) => { setEditingTask(t); setIsTaskModalOpen(true); };
-  const closeTaskModal = () => setIsTaskModalOpen(false);
-  const openProfileModal = () => setIsProfileModalOpen(true);
-  const closeProfileModal = () => setIsProfileModalOpen(false);
-  
-  // --- Render Logic ---
-  const renderView = () => {
-    switch (activeView) {
-      case 'courses':
-        return <CoursesView courses={courses} tasks={tasks} openCourseModal={openCourseModal} handleDeleteCourse={handleDeleteCourse} openTaskModal={openTaskModal} updateCourse={updateGenericDoc} />;
-      case 'tasks':
-        return <TasksView tasks={tasks} courses={courses} openTaskModal={openTaskModal} handleDeleteTask={handleDeleteTask} updateTask={updateGenericDoc}/>;
-      case 'planner':
-        return <PlannerView tasks={tasks} courses={courses} />;
-      case 'dashboard':
-      default:
-        return <DashboardView tasks={tasks} courses={courses} openTaskModal={openTaskModal} updateTask={updateGenericDoc} userProfile={userProfile} />;
-    }
-  };
-
-  if (isLoading) {
-    return <div className="bg-gray-900 text-white min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div></div>;
-  }
-  
-  const themeStyle = { '--theme-color': userProfile.themeColor || '#3b82f6' };
-
-  return (
-    <div style={themeStyle} className="bg-gray-900 text-gray-200 min-h-screen flex font-sans">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} openProfileModal={openProfileModal} />
-      <main className="flex-1 p-4 sm:p-8 ml-16 sm:ml-64 transition-all duration-300">
-        {renderView()}
-      </main>
-      {isCourseModalOpen && <CourseModal onClose={closeCourseModal} onSubmit={handleCourseSubmit} course={editingCourse} />}
-      {isTaskModalOpen && <TaskModal onClose={closeTaskModal} onSubmit={handleTaskSubmit} task={editingTask} courses={courses} />}
-      {isProfileModalOpen && <ProfileModal onClose={closeProfileModal} onSubmit={handleProfileSubmit} profile={userProfile} />}
-    </div>
-  );
-}
-
-// --- Components ---
-
-function Sidebar({ activeView, setActiveView, openProfileModal }) {
-    const navItems = [
-        { id: 'dashboard', icon: <BarChart2 size={24} />, label: 'Dashboard' },
-        { id: 'courses', icon: <BookOpen size={24} />, label: 'Courses' },
-        { id: 'tasks', icon: <CheckSquare size={24} />, label: 'Tasks' },
-        { id: 'planner', icon: <Calendar size={24} />, label: 'Planner' },
-    ];
-    const [isExpanded, setIsExpanded] = useState(false);
-
-    return (
-        <aside 
-            className={`fixed top-0 left-0 h-full bg-gray-950/50 backdrop-blur-sm border-r border-gray-700/50 transition-all duration-300 ease-in-out z-40 ${isExpanded ? 'w-64' : 'w-16'}`}
-            onMouseEnter={() => setIsExpanded(true)} onMouseLeave={() => setIsExpanded(false)} >
-            <div className="flex flex-col h-full">
-                <div className="flex items-center justify-center h-20 border-b border-gray-700/50">
-                   <BookOpen size={28} className="text-[var(--theme-color)]" />
-                </div>
-                <nav className="flex-1 py-4">
-                    <ul>
-                        {navItems.map(item => (
-                            <li key={item.id} className="px-4 py-2">
-                                <button onClick={() => setActiveView(item.id)} className={`flex items-center w-full rounded-md p-3 transition-colors duration-200 ${activeView === item.id ? 'bg-[var(--theme-color)]/20 text-[var(--theme-color)]' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'}`}>
-                                    {item.icon}
-                                    <span className={`ml-4 transition-opacity duration-200 ${isExpanded ? 'opacity-100' : 'opacity-0'}`}>{item.label}</span>
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
-                </nav>
-                 <div className="p-4 border-t border-gray-700/50">
-                    <button onClick={openProfileModal} className={`flex items-center w-full rounded-md p-3 transition-colors duration-200 text-gray-400 hover:bg-gray-700/50 hover:text-white`}>
-                        <User size={24} />
-                        <span className={`ml-4 transition-opacity duration-200 ${isExpanded ? 'opacity-100' : 'opacity-0'}`}>Profile</span>
+        
+        return (
+            <div className="animate-fade-in">
+                <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+                    <div>
+                       <h1 className="text-4xl font-bold text-white">Welcome, {userProfile.name}!</h1>
+                       <p className="text-gray-400 mt-1">Here's your academic snapshot for today.</p>
+                    </div>
+                    <button onClick={() => openTaskModal()} className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity shadow-lg shadow-[var(--theme-color)]/20">
+                        <Icon name="Plus" size={18} /> New Task
                     </button>
-                 </div>
-            </div>
-        </aside>
-    );
-}
-
-function DashboardView({ tasks, courses, openTaskModal, updateTask, userProfile }) {
-    const upcomingTasks = tasks.filter(t => t.status !== 'completed' && t.dueDate).sort((a, b) => a.dueDate.seconds - b.dueDate.seconds).slice(0, 5);
-    const getCourseName = (courseId) => courses.find(c => c.id === courseId)?.name || 'Unassigned';
-    const stats = {
-        totalCourses: courses.length,
-        activeTasks: tasks.filter(t => t.status !== 'completed').length,
-        completedTasks: tasks.filter(t => t.status === 'completed').length,
-    };
-    
-    return (
-        <div className="animate-fade-in">
-            <header className="flex justify-between items-center mb-8">
-                <div>
-                   <h1 className="text-4xl font-bold text-white">Welcome, {userProfile.name}!</h1>
-                   <p className="text-gray-400">Here's your academic snapshot for today.</p>
+                </header>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <StatCard title="Total Courses" value={stats.totalCourses} icon="BookOpen" />
+                    <StatCard title="Active Tasks" value={stats.activeTasks} icon="CheckSquare" />
+                    <StatCard title="Tasks Completed" value={stats.completedTasks} icon="CheckSquare" color="lightgreen" />
                 </div>
-                <button onClick={() => openTaskModal()} className="flex items-center gap-2 px-4 py-2 bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity shadow-lg shadow-[var(--theme-color)]/20">
-                    <Plus size={18} /> New Task
-                </button>
-            </header>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <StatCard title="Total Courses" value={stats.totalCourses} icon={<BookOpen />} />
-                <StatCard title="Active Tasks" value={stats.activeTasks} icon={<CheckSquare />} />
-                <StatCard title="Tasks Completed" value={stats.completedTasks} icon={<CheckSquare color="lightgreen"/>} />
-            </div>
-            <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50">
-                <h2 className="text-2xl font-semibold text-white mb-4">Upcoming Deadlines</h2>
-                {upcomingTasks.length > 0 ? (
-                    <ul className="space-y-4">
-                        {upcomingTasks.map(task => (
-                            <TaskItem key={task.id} task={task} courseName={getCourseName(task.courseId)} onStatusChange={(status) => updateTask('tasks', task.id, {status})} />
-                        ))}
-                    </ul>
-                ) : <p className="text-gray-400 text-center py-4">No upcoming tasks. Great job!</p>}
-            </div>
-        </div>
-    );
-}
-
-
-function CoursesView({ courses, tasks, openCourseModal, handleDeleteCourse, openTaskModal, updateCourse }) {
-    const [expandedCourse, setExpandedCourse] = useState(null);
-
-    return (
-        <div className="animate-fade-in">
-            <header className="flex justify-between items-center mb-8">
-                <h1 className="text-4xl font-bold text-white">Courses</h1>
-                <button onClick={() => openCourseModal()} className="flex items-center gap-2 px-4 py-2 bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity shadow-lg shadow-[var(--theme-color)]/20">
-                    <Plus size={18} /> New Course
-                </button>
-            </header>
-            {courses.length > 0 ? (
-                <div className="space-y-4">
-                    {courses.map(course => (
-                        <CourseCard 
-                            key={course.id} 
-                            course={course} 
-                            taskCount={tasks.filter(t => t.courseId === course.id).length}
-                            onEdit={() => openCourseModal(course)}
-                            onDelete={() => handleDeleteCourse(course.id)}
-                            isExpanded={expandedCourse === course.id}
-                            onToggleExpand={() => setExpandedCourse(expandedCourse === course.id ? null : course.id)}
-                            updateCourse={updateCourse}
-                        />
-                    ))}
-                </div>
-            ) : <EmptyState icon={<BookOpen size={48} />} title="No Courses Yet" message="Get started by adding your first course." buttonText="Add Course" onClick={() => openCourseModal()} />}
-        </div>
-    );
-}
-
-
-function CourseCard({ course, taskCount, onEdit, onDelete, isExpanded, onToggleExpand, updateCourse }) {
-    const [notes, setNotes] = useState(course.notes || '');
-
-    const handleNotesBlur = () => {
-        updateCourse('courses', course.id, { notes });
-    };
-
-    return (
-        <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 flex flex-col transition-all duration-300">
-            <div className="p-4 flex items-center cursor-pointer" onClick={onToggleExpand}>
-                <div className="w-2 h-10 rounded-full mr-4" style={{ backgroundColor: course.color }}></div>
-                <div className="flex-1">
-                    <h3 className="text-xl font-bold text-white">{course.name}</h3>
-                    <p className="text-gray-400 text-sm">{course.code} &bull; {course.professor}</p>
-                </div>
-                <div className="flex items-center gap-4">
-                    <span className="text-sm text-gray-400">{taskCount} tasks</span>
-                    <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"><Edit size={16} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-red-400 transition-colors"><Trash2 size={16} /></button>
-                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50">
+                    <h2 className="text-2xl font-semibold text-white mb-4">Upcoming Deadlines</h2>
+                    {upcomingTasks.length > 0 ? (
+                        <ul className="space-y-4">
+                            {upcomingTasks.map(task => (
+                                <TaskItem key={task.id} task={task} courseName={getCourseName(task.courseId)} onStatusChange={(status) => updateTask('tasks', task.id, {status})} />
+                            ))}
+                        </ul>
+                    ) : <p className="text-gray-400 text-center py-4">No upcoming tasks. Great job!</p>}
                 </div>
             </div>
-            {isExpanded && (
-                <div className="p-6 pt-2 border-t border-gray-700/50 animate-fade-in-fast space-y-6">
-                    <div>
-                      <h4 className="text-lg font-semibold mb-2">Schedule</h4>
-                      <p className="text-gray-300">{course.schedule || 'Not set'}</p>
-                    </div>
-                    <div>
-                        <h4 className="text-lg font-semibold mb-2">Quick Notes</h4>
-                        <textarea 
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          onBlur={handleNotesBlur}
-                          placeholder="Jot down a quick reminder..."
-                          className="w-full p-2 bg-gray-700 rounded-md border border-gray-600 focus:ring-2 focus:ring-[var(--theme-color)]"
-                        />
-                    </div>
-                    {/* Placeholder for future attendance and exam features */}
-                    <div className="text-sm text-gray-500">Attendance & Exam tracking coming soon!</div>
-                </div>
-            )}
-        </div>
-    );
-}
+        );
+    }
 
+    function CoursesView({ courses, tasks, openCourseModal, handleDeleteCourse, updateCourse }) {
+        const [expandedCourse, setExpandedCourse] = useState(null);
 
-function TasksView({ tasks, courses, openTaskModal, handleDeleteTask, updateTask }) {
-    const getCourseInfo = (courseId) => courses.find(c => c.id === courseId) || { name: 'Unassigned', color: '#6b7280' };
-
-    return (
-        <div className="animate-fade-in">
-            <header className="flex justify-between items-center mb-8">
-                <h1 className="text-4xl font-bold text-white">Tasks</h1>
-                <button onClick={() => openTaskModal()} className="flex items-center gap-2 px-4 py-2 bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity shadow-lg shadow-[var(--theme-color)]/20">
-                    <Plus size={18} /> New Task
-                </button>
-            </header>
-            {tasks.length > 0 ? (
-                <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-2">
-                    <ul className="space-y-2">
-                        {tasks.sort((a,b) => (a.dueDate?.seconds || Infinity) - (b.dueDate?.seconds || Infinity)).map(task => (
-                            <FullTaskItem 
-                                key={task.id} 
-                                task={task} 
-                                courseInfo={getCourseInfo(task.courseId)} 
-                                onEdit={() => openTaskModal(task)} 
-                                onDelete={() => handleDeleteTask(task.id)}
-                                onStatusChange={(status) => updateTask('tasks', task.id, {status})}
+        return (
+            <div className="animate-fade-in">
+                <header className="flex justify-between items-center mb-8">
+                    <h1 className="text-4xl font-bold text-white">Courses</h1>
+                    <button onClick={() => openCourseModal()} className="flex items-center gap-2 px-4 py-2 bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity shadow-lg shadow-[var(--theme-color)]/20">
+                        <Icon name="Plus" size={18} /> New Course
+                    </button>
+                </header>
+                {courses.length > 0 ? (
+                    <div className="space-y-4">
+                        {courses.map(course => (
+                            <CourseCard 
+                                key={course.id} 
+                                course={course} 
+                                taskCount={tasks.filter(t => t.courseId === course.id).length}
+                                onEdit={() => openCourseModal(course)}
+                                onDelete={() => handleDeleteCourse(course.id)}
+                                isExpanded={expandedCourse === course.id}
+                                onToggleExpand={() => setExpandedCourse(expandedCourse === course.id ? null : course.id)}
+                                updateCourse={updateCourse}
                             />
                         ))}
-                    </ul>
-                </div>
-            ) : <EmptyState icon={<CheckSquare size={48} />} title="You're All Clear!" message="No tasks to display. Add a new one to get started." buttonText="Add Task" onClick={() => openTaskModal()} />}
-        </div>
-    );
-}
+                    </div>
+                ) : <EmptyState icon="BookOpen" title="No Courses Yet" message="Get started by adding your first course." buttonText="Add Course" onClick={() => openCourseModal()} />}
+            </div>
+        );
+    }
 
-function PlannerView({ tasks, courses }) {
-    const events = tasks.filter(t => t.dueDate).map(task => {
-        const course = courses.find(c => c.id === task.courseId);
-        return {
-            title: task.name,
-            date: new Date(task.dueDate.seconds * 1000),
-            courseName: course?.name || 'Unassigned',
-            color: course?.color || '#6b7280',
+    function CourseCard({ course, taskCount, onEdit, onDelete, isExpanded, onToggleExpand, updateCourse }) {
+        const [notes, setNotes] = useState(course.notes || '');
+
+        const handleNotesBlur = () => {
+            if(course.notes !== notes) {
+                updateCourse('courses', course.id, { notes });
+            }
         };
-    }).sort((a, b) => a.date - b.date);
 
-    return (
-        <div className="animate-fade-in">
-            <h1 className="text-4xl font-bold text-white mb-8">Planner</h1>
-            <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-6">
-                <h2 className="text-2xl font-semibold text-white mb-4">Upcoming Deadlines & Events</h2>
-                {events.length > 0 ? (
-                    <div className="space-y-4">
-                        {events.map((event, index) => (
-                            <div key={index} className="flex items-center gap-4 p-4 bg-gray-700/50 rounded-lg">
-                                <div className="flex flex-col items-center justify-center w-20 text-center">
-                                    <span className="text-sm text-gray-400">{event.date.toLocaleString('default', { month: 'short' })}</span>
-                                    <span className="text-2xl font-bold text-white">{event.date.getDate()}</span>
+        return (
+            <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 flex flex-col transition-all duration-300">
+                <div className="p-4 flex items-center cursor-pointer" onClick={onToggleExpand}>
+                    <div className="w-2 h-10 rounded-full mr-4 flex-shrink-0" style={{ backgroundColor: course.color }}></div>
+                    <div className="flex-1 min-w-0">
+                        <h3 className="text-xl font-bold text-white truncate">{course.name}</h3>
+                        <p className="text-gray-400 text-sm truncate">{course.code} &bull; {course.professor}</p>
+                    </div>
+                    <div className="flex items-center gap-2 sm:gap-4 ml-2">
+                        <span className="text-sm text-gray-400 hidden sm:block">{taskCount} tasks</span>
+                        <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"><Icon name="Edit" size={16} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-red-400 transition-colors"><Icon name="Trash2" size={16} /></button>
+                        <Icon name={isExpanded ? 'ChevronUp' : 'ChevronDown'} size={20} />
+                    </div>
+                </div>
+                {isExpanded && (
+                    <div className="p-6 pt-2 border-t border-gray-700/50 animate-fade-in-fast space-y-6">
+                        <div>
+                          <h4 className="text-lg font-semibold mb-2">Schedule</h4>
+                          <p className="text-gray-300">{course.schedule || 'Not set'}</p>
+                        </div>
+                        <div>
+                            <h4 className="text-lg font-semibold mb-2">Quick Notes</h4>
+                            <textarea 
+                              value={notes}
+                              onChange={(e) => setNotes(e.target.value)}
+                              onBlur={handleNotesBlur}
+                              placeholder="Jot down a quick reminder..."
+                              className="w-full p-2 bg-gray-700 rounded-md border border-gray-600 focus:ring-2 focus:ring-[var(--theme-color)]"
+                            />
+                        </div>
+                        <div className="text-sm text-gray-500">Attendance & Exam tracking coming soon!</div>
+                    </div>
+                )}
+            </div>
+        );
+    }
+    
+    function TasksView({ tasks, courses, openTaskModal, handleDeleteTask, updateTask }) {
+        const getCourseInfo = (courseId) => courses.find(c => c.id === courseId) || { name: 'Unassigned', color: '#6b7280' };
+
+        return (
+            <div className="animate-fade-in">
+                <header className="flex justify-between items-center mb-8">
+                    <h1 className="text-4xl font-bold text-white">Tasks</h1>
+                    <button onClick={() => openTaskModal()} className="flex items-center gap-2 px-4 py-2 bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity shadow-lg shadow-[var(--theme-color)]/20">
+                        <Icon name="Plus" size={18} /> New Task
+                    </button>
+                </header>
+                {tasks.length > 0 ? (
+                    <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-2">
+                        <ul className="space-y-2">
+                            {tasks.sort((a,b) => (a.dueDate?.seconds || Infinity) - (b.dueDate?.seconds || Infinity)).map(task => (
+                                <FullTaskItem 
+                                    key={task.id} 
+                                    task={task} 
+                                    courseInfo={getCourseInfo(task.courseId)} 
+                                    onEdit={() => openTaskModal(task)} 
+                                    onDelete={() => handleDeleteTask(task.id)}
+                                    onStatusChange={(status) => updateTask('tasks', task.id, {status})}
+                                />
+                            ))}
+                        </ul>
+                    </div>
+                ) : <EmptyState icon="CheckSquare" title="You're All Clear!" message="No tasks to display. Add a new one to get started." buttonText="Add Task" onClick={() => openTaskModal()} />}
+            </div>
+        );
+    }
+
+    function PlannerView({ tasks, courses }) {
+        const events = tasks.filter(t => t.dueDate).map(task => {
+            const course = courses.find(c => c.id === task.courseId);
+            return {
+                title: task.name,
+                date: new Date(task.dueDate.seconds * 1000),
+                courseName: course?.name || 'Unassigned',
+                color: course?.color || '#6b7280',
+            };
+        }).sort((a, b) => a.date - b.date);
+
+        return (
+            <div className="animate-fade-in">
+                <h1 className="text-4xl font-bold text-white mb-8">Planner</h1>
+                <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-6">
+                    <h2 className="text-2xl font-semibold text-white mb-4">Upcoming Deadlines & Events</h2>
+                    {events.length > 0 ? (
+                        <div className="space-y-4">
+                            {events.map((event, index) => (
+                                <div key={index} className="flex items-center gap-4 p-4 bg-gray-700/50 rounded-lg">
+                                    <div className="flex flex-col items-center justify-center w-20 text-center flex-shrink-0">
+                                        <span className="text-sm text-gray-400">{event.date.toLocaleString('default', { month: 'short' })}</span>
+                                        <span className="text-2xl font-bold text-white">{event.date.getDate()}</span>
+                                    </div>
+                                    <div className="w-1.5 h-12 rounded-full flex-shrink-0" style={{backgroundColor: event.color}}></div>
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-white truncate">{event.title}</p>
+                                        <p className="text-sm text-gray-300 truncate">{event.courseName}</p>
+                                    </div>
                                 </div>
-                                <div className="w-1.5 h-12 rounded-full" style={{backgroundColor: event.color}}></div>
-                                <div>
-                                    <p className="font-semibold text-white">{event.title}</p>
-                                    <p className="text-sm text-gray-300">{event.courseName}</p>
-                                </div>
+                            ))}
+                        </div>
+                    ) : <p className="text-gray-400 text-center py-8">No scheduled events. Add tasks with due dates to see them here.</p>}
+                </div>
+            </div>
+        );
+    }
+    
+    // --- Common & Reusable Components ---
+
+    function EmptyState({ icon, title, message, buttonText, onClick }) {
+        return (
+            <div className="text-center py-16 bg-gray-800/50 rounded-xl border border-dashed border-gray-700">
+                <div className="text-gray-500 mx-auto mb-4"><Icon name={icon} size={48} /></div>
+                <h2 className="text-2xl font-semibold text-white">{title}</h2>
+                <p className="text-gray-400 mt-2 mb-4">{message}</p>
+                <button onClick={onClick} className="flex items-center gap-2 px-4 py-2 mx-auto bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity">
+                    <Icon name="Plus" size={18} /> {buttonText}
+                </button>
+            </div>
+        );
+    }
+
+    function StatCard({ title, value, icon, color }) {
+        return (
+            <div className="bg-gray-800/50 p-6 rounded-xl flex items-center gap-6 border border-gray-700/50">
+                <div className="p-3 bg-gray-700/50 rounded-lg text-[var(--theme-color)]">
+                    <Icon name={icon} size={28} color={color}/>
+                </div>
+                <div>
+                    <p className="text-gray-400 text-sm">{title}</p>
+                    <p className="text-3xl font-bold text-white">{value}</p>
+                </div>
+            </div>
+        );
+    }
+
+    function TaskItem({ task, courseName, onStatusChange }) {
+        const isOverdue = task.status !== 'completed' && task.dueDate && new Date(task.dueDate.seconds * 1000) < new Date();
+        return (
+            <li className="bg-gray-700/50 p-4 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between transition-all hover:bg-gray-700 gap-3">
+                <div className="min-w-0 flex-1"><p className="font-semibold text-white truncate">{task.name}</p><p className="text-sm text-gray-400 truncate">{courseName}</p></div>
+                <div className="flex items-center gap-4 flex-shrink-0 w-full sm:w-auto">
+                    <p className={`text-sm ${isOverdue ? 'text-red-400' : 'text-gray-300'}`}>{formatDate(task.dueDate)}</p>
+                    <select value={task.status} onChange={(e) => onStatusChange(e.target.value)} className="bg-gray-600 text-white rounded-md p-1.5 appearance-none cursor-pointer">
+                        <option value="todo">To-Do</option><option value="in_progress">In Progress</option><option value="completed">Completed</option>
+                    </select>
+                </div>
+            </li>
+        );
+    }
+
+    function FullTaskItem({ task, courseInfo, onEdit, onDelete, onStatusChange }) {
+        const isOverdue = task.status !== 'completed' && task.dueDate && new Date(task.dueDate.seconds * 1000) < new Date();
+        return (
+            <li className="bg-gray-700/50 p-4 rounded-lg flex flex-col sm:flex-row items-start sm:items-center gap-4 transition-all hover:bg-gray-700">
+                <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-white truncate">{task.name}</p>
+                    <div className="flex items-center flex-wrap gap-2 text-sm mt-1">
+                        <span className="px-2 py-0.5 rounded-full text-white text-xs font-semibold" style={{backgroundColor: courseInfo.color}}>{courseInfo.name}</span>
+                        <span className="text-gray-400">{task.taskType || 'General'}</span>
+                        <span className="text-gray-400">&bull; {task.workType || 'Individual'}</span>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto flex-shrink-0">
+                    <p className={`text-sm font-medium w-32 hidden md:block ${isOverdue ? 'text-red-400' : 'text-gray-300'}`}>{formatDate(task.dueDate)}</p>
+                    <select value={task.status} onChange={(e) => onStatusChange(e.target.value)} className="bg-gray-600 border border-gray-500 text-white text-sm rounded-lg block w-32 p-2.5">
+                        <option value="todo">To-Do</option><option value="in_progress">In Progress</option><option value="completed">Completed</option>
+                    </select>
+                    <div className="flex gap-1">
+                        <button onClick={onEdit} className="p-2 rounded-full text-gray-400 hover:bg-gray-600 hover:text-white"><Icon name="Edit" size={16} /></button>
+                        <button onClick={onDelete} className="p-2 rounded-full text-gray-400 hover:bg-gray-600 hover:text-red-400"><Icon name="Trash2" size={16} /></button>
+                    </div>
+                </div>
+            </li>
+        );
+    }
+
+    // --- Modals ---
+    function Modal({ children, onClose }) {
+        return (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-fade-in-fast" onClick={onClose}>
+                <div className="bg-gray-800 rounded-xl shadow-2xl w-full max-w-md m-4 border border-gray-700" onClick={e => e.stopPropagation()}>
+                    {children}
+                </div>
+            </div>
+        );
+    }
+
+    function ModalHeader({ title, onClose }) {
+        return (
+            <div className="p-6 border-b border-gray-700 flex justify-between items-center">
+                <h2 className="text-2xl font-semibold text-white">{title}</h2>
+                <button type="button" onClick={onClose} className="p-1 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white"><Icon name="X" size={24}/></button>
+            </div>
+        );
+    }
+
+    function ModalFooter({ onCancel, submitText }) {
+        return (
+            <div className="p-6 bg-gray-800/50 rounded-b-xl flex justify-end gap-4">
+                <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                <button type="submit" className="px-4 py-2 rounded-lg bg-[var(--theme-color)] hover:opacity-90 text-white transition-opacity">{submitText}</button>
+            </div>
+        );
+    }
+
+    function CourseModal({ onClose, onSubmit, course }) {
+        const [form, setForm] = useState({
+            name: course?.name || '', code: course?.code || '', professor: course?.professor || '', 
+            schedule: course?.schedule || '', color: course?.color || courseColors[0]
+        });
+        const handleChange = e => setForm({...form, [e.target.name]: e.target.value});
+        const handleSubmit = (e) => { e.preventDefault(); onSubmit(form); };
+
+        return (
+            <Modal onClose={onClose}>
+                <form onSubmit={handleSubmit}>
+                    <ModalHeader title={course ? 'Edit Course' : 'Add New Course'} onClose={onClose} />
+                    <div className="p-6 space-y-4">
+                        <InputField name="name" label="Course Name" value={form.name} onChange={handleChange} required />
+                        <InputField name="code" label="Course Code" value={form.code} onChange={handleChange} placeholder="e.g., CS101" />
+                        <InputField name="professor" label="Professor" value={form.professor} onChange={handleChange} />
+                        <InputField name="schedule" label="Schedule" value={form.schedule} onChange={handleChange} placeholder="e.g., MWF 10:00 - 11:30 AM" />
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Color</label>
+                            <div className="flex flex-wrap gap-2">
+                                {courseColors.map(c => (
+                                    <button type="button" key={c} onClick={() => setForm({...form, color: c})} className={`w-8 h-8 rounded-full transition-transform hover:scale-110 ${form.color === c ? 'ring-2 ring-offset-2 ring-offset-gray-800 ring-white' : ''}`} style={{ backgroundColor: c }}></button>
+                                ))}
                             </div>
-                        ))}
+                        </div>
                     </div>
-                ) : <p className="text-gray-400 text-center py-8">No scheduled events. Add tasks with due dates to see them here.</p>}
-            </div>
-        </div>
-    );
-}
+                    <ModalFooter onCancel={onClose} submitText={course ? 'Save Changes' : 'Add Course'} />
+                </form>
+            </Modal>
+        );
+    }
 
-// --- Common Components ---
-function EmptyState({ icon, title, message, buttonText, onClick }) {
-    return (
-        <div className="text-center py-16 bg-gray-800/50 rounded-xl border border-dashed border-gray-700">
-            <div className="text-gray-500 mx-auto mb-4">{icon}</div>
-            <h2 className="text-2xl font-semibold text-white">{title}</h2>
-            <p className="text-gray-400 mt-2 mb-4">{message}</p>
-            <button onClick={onClick} className="flex items-center gap-2 px-4 py-2 mx-auto bg-[var(--theme-color)] text-white rounded-lg hover:opacity-90 transition-opacity">
-                <Plus size={18} /> {buttonText}
-            </button>
-        </div>
-    );
-}
+    function TaskModal({ onClose, onSubmit, task, courses }) {
+        const [form, setForm] = useState({
+            name: task?.name || '', courseId: task?.courseId || '', 
+            dueDate: task?.dueDate ? new Date(task.dueDate.seconds * 1000).toISOString().split('T')[0] : '', 
+            status: task?.status || 'todo', taskType: task?.taskType || 'Assignment', workType: task?.workType || 'Individual',
+            customTaskType: ''
+        });
+        const handleChange = e => setForm({...form, [e.target.name]: e.target.value});
+        const handleSubmit = (e) => {
+            e.preventDefault();
+            const finalTaskType = form.taskType === 'custom' ? form.customTaskType : form.taskType;
+            const { customTaskType, ...rest } = form;
+            onSubmit({ ...rest, taskType: finalTaskType });
+        };
 
-function StatCard({ title, value, icon }) {
-    return (
-        <div className="bg-gray-800/50 p-6 rounded-xl flex items-center gap-6 border border-gray-700/50">
-            <div className="p-3 bg-gray-700/50 rounded-lg text-[var(--theme-color)]">
-                {React.cloneElement(icon, { size: 28 })}
-            </div>
+        return (
+            <Modal onClose={onClose}>
+                <form onSubmit={handleSubmit}>
+                    <ModalHeader title={task ? 'Edit Task' : 'Add New Task'} onClose={onClose} />
+                    <div className="p-6 space-y-4">
+                        <InputField name="name" label="Task Name" value={form.name} onChange={handleChange} required />
+                        <SelectField name="courseId" label="Course" value={form.courseId} onChange={handleChange} required>
+                            <option value="" disabled>Select a course</option>
+                            {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </SelectField>
+                        <InputField name="dueDate" label="Due Date" type="date" value={form.dueDate} onChange={handleChange} />
+                        <div className="grid grid-cols-2 gap-4">
+                            <SelectField name="workType" label="Work Type" value={form.workType} onChange={handleChange}>
+                                <option>Individual</option><option>Group</option>
+                            </SelectField>
+                            <SelectField name="taskType" label="Task Type" value={form.taskType} onChange={handleChange}>
+                                {defaultTaskTypes.map(t => <option key={t}>{t}</option>)}
+                                <option value="custom">Custom...</option>
+                            </SelectField>
+                        </div>
+                        {form.taskType === 'custom' && (
+                            <InputField name="customTaskType" label="Custom Task Type" value={form.customTaskType} onChange={handleChange} placeholder="e.g., Presentation" required />
+                        )}
+                    </div>
+                    <ModalFooter onCancel={onClose} submitText={task ? 'Save Changes' : 'Add Task'} />
+                </form>
+            </Modal>
+        );
+    }
+    
+    function ProfileModal({ onClose, onSubmit, profile }) {
+        const [form, setForm] = useState({ name: profile?.name || '', themeColor: profile?.themeColor || '#3b82f6' });
+        const handleChange = e => setForm({...form, [e.target.name]: e.target.value});
+        const handleSubmit = (e) => { e.preventDefault(); onSubmit(form); };
+
+        return (
+            <Modal onClose={onClose}>
+                <form onSubmit={handleSubmit}>
+                    <ModalHeader title="Edit Profile" onClose={onClose} />
+                    <div className="p-6 space-y-4">
+                        <InputField name="name" label="Welcome Message Name" value={form.name} onChange={handleChange} required />
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Theme Color</label>
+                            <div className="flex flex-wrap gap-2">
+                                {courseColors.map(c => (
+                                    <button type="button" key={c} onClick={() => setForm({...form, themeColor: c})} className={`w-8 h-8 rounded-full transition-transform hover:scale-110 ${form.themeColor === c ? 'ring-2 ring-offset-2 ring-offset-gray-800 ring-white' : ''}`} style={{ backgroundColor: c }}></button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    <ModalFooter onCancel={onClose} submitText="Save Profile" />
+                </form>
+            </Modal>
+        );
+    }
+    
+    function InputField({ id, name, label, ...props }) {
+        return (
             <div>
-                <p className="text-gray-400 text-sm">{title}</p>
-                <p className="text-3xl font-bold text-white">{value}</p>
+                <label htmlFor={id || name} className="block text-sm font-medium text-gray-300 mb-2">{label}</label>
+                <input id={id || name} name={name} {...props} className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-2 focus:ring-[var(--theme-color)] focus:border-[var(--theme-color)] block w-full p-2.5" />
             </div>
-        </div>
-    );
-}
+        );
+    }
 
-function TaskItem({ task, courseName, onStatusChange }) { /* Simplified for dashboard */
-    const isOverdue = task.status !== 'completed' && task.dueDate && new Date(task.dueDate.seconds * 1000) < new Date();
-    return (
-        <li className="bg-gray-700/50 p-4 rounded-lg flex items-center justify-between transition-all hover:bg-gray-700">
-            <div><p className="font-semibold text-white">{task.name}</p><p className="text-sm text-gray-400">{courseName}</p></div>
-            <div className="flex items-center gap-4">
-                <p className={`text-sm ${isOverdue ? 'text-red-400' : 'text-gray-300'}`}>{formatDate(task.dueDate)}</p>
-                <select value={task.status} onChange={(e) => onStatusChange(e.target.value)} className="bg-gray-600 text-white rounded-md p-1.5 appearance-none cursor-pointer">
-                    <option value="todo">To-Do</option><option value="in_progress">In Progress</option><option value="completed">Completed</option>
+    function SelectField({ id, name, label, children, ...props }) {
+        return (
+            <div>
+                <label htmlFor={id || name} className="block text-sm font-medium text-gray-300 mb-2">{label}</label>
+                <select id={id || name} name={name} {...props} className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-2 focus:ring-[var(--theme-color)] focus:border-[var(--theme-color)] block w-full p-2.5">
+                    {children}
                 </select>
             </div>
-        </li>
-    );
-}
+        );
+    }
+    
+    // Mount the React application to the 'root' div in our HTML
+    ReactDOM.render(<App />, document.getElementById('root'));
 
-
-function FullTaskItem({ task, courseInfo, onEdit, onDelete, onStatusChange }) {
-    const isOverdue = task.status !== 'completed' && task.dueDate && new Date(task.dueDate.seconds * 1000) < new Date();
-    return (
-        <li className="bg-gray-700/50 p-4 rounded-lg flex flex-col sm:flex-row items-start sm:items-center gap-4 transition-all hover:bg-gray-700">
-            <div className="flex-1">
-                <p className="font-semibold text-white">{task.name}</p>
-                <div className="flex items-center gap-2 text-sm mt-1">
-                    <span className="px-2 py-0.5 rounded-full" style={{backgroundColor: courseInfo.color, color: '#fff'}}>{courseInfo.name}</span>
-                    <span className="text-gray-400">{task.taskType || 'General'}</span>
-                    <span className="text-gray-400">&bull; {task.workType || 'Individual'}</span>
-                </div>
-            </div>
-            <div className="flex items-center gap-4 w-full sm:w-auto">
-                <p className={`text-sm font-medium w-32 ${isOverdue ? 'text-red-400' : 'text-gray-300'}`}>{formatDate(task.dueDate)}</p>
-                <select value={task.status} onChange={(e) => onStatusChange(e.target.value)} className="bg-gray-600 border border-gray-500 text-white text-sm rounded-lg block w-32 p-2.5">
-                    <option value="todo">To-Do</option><option value="in_progress">In Progress</option><option value="completed">Completed</option>
-                </select>
-                <div className="flex gap-1">
-                    <button onClick={onEdit} className="p-2 rounded-full text-gray-400 hover:bg-gray-600 hover:text-white"><Edit size={16} /></button>
-                    <button onClick={onDelete} className="p-2 rounded-full text-gray-400 hover:bg-gray-600 hover:text-red-400"><Trash2 size={16} /></button>
-                </div>
-            </div>
-        </li>
-    );
-}
-
-// --- Modals ---
-function Modal({ children, onClose }) {
-    return (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-fade-in-fast" onClick={onClose}>
-            <div className="bg-gray-800 rounded-xl shadow-2xl w-full max-w-md m-4 border border-gray-700" onClick={e => e.stopPropagation()}>
-                {children}
-            </div>
-        </div>
-    );
-}
-
-function ModalHeader({ title, onClose }) {
-    return (
-        <div className="p-6 border-b border-gray-700 flex justify-between items-center">
-            <h2 className="text-2xl font-semibold text-white">{title}</h2>
-            <button type="button" onClick={onClose} className="p-1 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white"><X size={24}/></button>
-        </div>
-    );
-}
-
-function ModalFooter({ onCancel, submitText, onSubmit }) {
-    return (
-        <div className="p-6 bg-gray-800/50 rounded-b-xl flex justify-end gap-4">
-            <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-            <button type="submit" onClick={onSubmit} className="px-4 py-2 rounded-lg bg-[var(--theme-color)] hover:opacity-90 text-white transition-opacity">{submitText}</button>
-        </div>
-    );
-}
-
-function CourseModal({ onClose, onSubmit, course }) {
-    const [form, setForm] = useState({
-        name: course?.name || '', code: course?.code || '', professor: course?.professor || '', 
-        schedule: course?.schedule || '', color: course?.color || courseColors[0]
-    });
-    const handleChange = e => setForm({...form, [e.target.name]: e.target.value});
-    const handleSubmit = (e) => { e.preventDefault(); onSubmit(form); };
-
-    return (
-        <Modal onClose={onClose}>
-            <form onSubmit={handleSubmit}>
-                <ModalHeader title={course ? 'Edit Course' : 'Add New Course'} onClose={onClose} />
-                <div className="p-6 space-y-4">
-                    <InputField name="name" label="Course Name" value={form.name} onChange={handleChange} required />
-                    <InputField name="code" label="Course Code" value={form.code} onChange={handleChange} placeholder="e.g., CS101" />
-                    <InputField name="professor" label="Professor" value={form.professor} onChange={handleChange} />
-                    <InputField name="schedule" label="Schedule" value={form.schedule} onChange={handleChange} placeholder="e.g., MWF 10:00 - 11:30 AM" />
-                    <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">Color</label>
-                        <div className="flex flex-wrap gap-2">
-                            {courseColors.map(c => (
-                                <button type="button" key={c} onClick={() => setForm({...form, color: c})} className={`w-8 h-8 rounded-full transition-transform hover:scale-110 ${form.color === c ? 'ring-2 ring-offset-2 ring-offset-gray-800 ring-white' : ''}`} style={{ backgroundColor: c }}></button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-                <ModalFooter onCancel={onClose} submitText={course ? 'Save Changes' : 'Add Course'} />
-            </form>
-        </Modal>
-    );
-}
-
-function TaskModal({ onClose, onSubmit, task, courses }) {
-    const [form, setForm] = useState({
-        name: task?.name || '', courseId: task?.courseId || '', 
-        dueDate: task?.dueDate ? new Date(task.dueDate.seconds * 1000).toISOString().split('T')[0] : '', 
-        status: task?.status || 'todo', taskType: task?.taskType || 'Assignment', workType: task?.workType || 'Individual',
-        customTaskType: ''
-    });
-    const handleChange = e => setForm({...form, [e.target.name]: e.target.value});
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        const finalTaskType = form.taskType === 'custom' ? form.customTaskType : form.taskType;
-        const { customTaskType, ...rest } = form;
-        onSubmit({ ...rest, taskType: finalTaskType });
-    };
-
-    return (
-        <Modal onClose={onClose}>
-            <form onSubmit={handleSubmit}>
-                <ModalHeader title={task ? 'Edit Task' : 'Add New Task'} onClose={onClose} />
-                <div className="p-6 space-y-4">
-                    <InputField name="name" label="Task Name" value={form.name} onChange={handleChange} required />
-                    <SelectField name="courseId" label="Course" value={form.courseId} onChange={handleChange} required>
-                        <option value="" disabled>Select a course</option>
-                        {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </SelectField>
-                    <InputField name="dueDate" label="Due Date" type="date" value={form.dueDate} onChange={handleChange} />
-                    <div className="grid grid-cols-2 gap-4">
-                        <SelectField name="workType" label="Work Type" value={form.workType} onChange={handleChange}>
-                            <option>Individual</option><option>Group</option>
-                        </SelectField>
-                        <SelectField name="taskType" label="Task Type" value={form.taskType} onChange={handleChange}>
-                            {defaultTaskTypes.map(t => <option key={t}>{t}</option>)}
-                            <option value="custom">Custom...</option>
-                        </SelectField>
-                    </div>
-                    {form.taskType === 'custom' && (
-                        <InputField name="customTaskType" label="Custom Task Type" value={form.customTaskType} onChange={handleChange} placeholder="e.g., Presentation" required />
-                    )}
-                </div>
-                <ModalFooter onCancel={onClose} submitText={task ? 'Save Changes' : 'Add Task'} />
-            </form>
-        </Modal>
-    );
-}
-
-function ProfileModal({ onClose, onSubmit, profile }) {
-    const [form, setForm] = useState({ name: profile?.name || '', themeColor: profile?.themeColor || '#3b82f6' });
-    const handleChange = e => setForm({...form, [e.target.name]: e.target.value});
-    const handleSubmit = (e) => { e.preventDefault(); onSubmit(form); };
-
-    return (
-        <Modal onClose={onClose}>
-            <form onSubmit={handleSubmit}>
-                <ModalHeader title="Edit Profile" onClose={onClose} />
-                <div className="p-6 space-y-4">
-                    <InputField name="name" label="Welcome Message Name" value={form.name} onChange={handleChange} required />
-                    <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">Theme Color</label>
-                        <div className="flex flex-wrap gap-2">
-                            {courseColors.map(c => (
-                                <button type="button" key={c} onClick={() => setForm({...form, themeColor: c})} className={`w-8 h-8 rounded-full transition-transform hover:scale-110 ${form.themeColor === c ? 'ring-2 ring-offset-2 ring-offset-gray-800 ring-white' : ''}`} style={{ backgroundColor: c }}></button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-                <ModalFooter onCancel={onClose} submitText="Save Profile" />
-            </form>
-        </Modal>
-    );
-}
-
-function InputField({ id, name, label, ...props }) {
-    return (
-        <div>
-            <label htmlFor={id || name} className="block text-sm font-medium text-gray-300 mb-2">{label}</label>
-            <input id={id || name} name={name} {...props} className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-2 focus:ring-[var(--theme-color)] focus:border-[var(--theme-color)] block w-full p-2.5" />
-        </div>
-    );
-}
-
-function SelectField({ id, name, label, children, ...props }) {
-    return (
-        <div>
-            <label htmlFor={id || name} className="block text-sm font-medium text-gray-300 mb-2">{label}</label>
-            <select id={id || name} name={name} {...props} className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-2 focus:ring-[var(--theme-color)] focus:border-[var(--theme-color)] block w-full p-2.5">
-                {children}
-            </select>
-        </div>
-    );
-}
+    </script>
+</body>
+</html>
